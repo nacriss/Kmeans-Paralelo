@@ -1,241 +1,279 @@
-RELATÓRIO – PARALELIZAÇÃO DO ALGORITMO K-MEANS
+# Paralelização do Algoritmo K-Means
 
-AUTORAS
+## Autoras
 
 * Ana Cristina Martins Silva
 * Letícia Azevedo Cota Barbosa
 * Lívia Alves Ferreira
 
-======================================================================
+---
 
-1. DESCRIÇÃO DA APLICAÇÃO
-   ======================================================================
+# Descrição da Aplicação
 
-Este projeto implementa o algoritmo de agrupamento K-Means em linguagem C.
+Este projeto implementa o algoritmo de agrupamento **K-Means** em linguagem **C**, explorando diferentes estratégias de paralelização utilizando:
 
-Utilizamos a base de dados US_Accidents_March23.csv, contendo aproximadamente
-7,7 milhões de registros de acidentes de trânsito nos Estados Unidos. Foram
-utilizadas as coordenadas geográficas (latitude e longitude) para formar os
-agrupamentos.
+* OpenMP para CPU Multicore;
+* OpenMP para GPU;
+* CUDA para GPU.
 
-O número de clusters escolhido para esse dataset foi K = 50, pois não faria
-sentido uma quantidade muito pequena de clusters, já que a ideia é agrupar os
-acidentes por estados.
+Foi utilizada a base de dados **US_Accidents_March23.csv**, contendo aproximadamente **7,7 milhões de registros de acidentes de trânsito nos Estados Unidos**.
 
-======================================================================
-2. IMPLEMENTAÇÃO SEQUENCIAL
-===========================
-Tempo obtido:
+As coordenadas geográficas (**latitude** e **longitude**) foram utilizadas como atributos para a formação dos agrupamentos.
 
-Versão: Sequencial
-Tempo: 28,470 s
+O valor adotado para o número de clusters foi:
 
-======================================================================
-3. OPENMP PARA MULTICORE (CPU)
-==============================
+```text
+K = 50
+```
 
-3.1 Estratégia de Paralelização
+A escolha foi motivada pela intenção de representar regiões geográficas distintas, tornando inadequada uma quantidade muito pequena de agrupamentos.
 
-A paralelização foi realizada utilizando a biblioteca OpenMP.
+---
 
-Após análise do algoritmo, observou-se que a etapa mais adequada para
-paralelização foi o processo de reatribuição dos pontos aos centróides
-(Steps 3 e 4).
+# Implementação Sequencial
+
+| Versão     | Tempo        |
+| ---------- | ------------ |
+| Sequencial | **28,470 s** |
+
+---
+
+# OpenMP para Multicore (CPU)
+
+## Estratégia de Paralelização
+
+Após a análise do algoritmo, verificou-se que o principal gargalo computacional encontra-se nos **Steps 3 e 4**, responsáveis por:
+
+1. Encontrar o centróide mais próximo de cada observação;
+2. Reatribuir os pontos aos clusters.
 
 Foi utilizada a diretiva:
 
+```c
 #pragma omp parallel for reduction(+:changed) private(t)
+```
 
-onde:
+### Justificativa
 
-* private(t) evita condições de corrida sobre a variável temporária;
-* reduction(+:changed) permite a soma segura da variável responsável por
-  contabilizar mudanças de cluster.
+* `private(t)` cria uma cópia privada da variável temporária para cada thread;
+* `reduction(+:changed)` realiza a soma segura da variável que contabiliza as alterações de cluster.
 
-Durante os testes verificamos que a paralelização do Step 2 (recalcular
-centróides) fazia uma grande contenção entre as threads, reduzindo o
-desempenho. Dessa forma, para não alterar a estrutura original do algoritmo
-K-Means, optamos por manter essa etapa sequencial.
+Durante os testes também foi avaliada a paralelização do **Step 2 (recalcular centróides)** utilizando mecanismos de sincronização como:
 
----
+* `critical`
+* `atomic`
 
-## 3.2 Resultados Obtidos
-
-## Threads      Tempo (s)
-
-1            28,61
-2            15,17
-4             8,41
-8             8,53
-16            8,22
-32            8,21
+Entretanto, os resultados apresentaram elevada contenção entre threads, reduzindo significativamente o desempenho. Por esse motivo, optou-se por manter essa etapa sequencial.
 
 ---
 
-## 3.3 Speedup
+## Resultados Obtidos
 
-Considerando o tempo com uma thread como referência:
+| Threads | Tempo (s) |
+| ------- | --------- |
+| 1       | 28,61     |
+| 2       | 15,17     |
+| 4       | 8,41      |
+| 8       | 8,53      |
+| 16      | 8,22      |
+| 32      | 8,21      |
 
-## Threads      Speedup
+### Speedup
 
-1            1,00
-2            1,89
-4            3,40
-8            3,35
-16           3,48
-32           3,49
+| Threads | Speedup |
+| ------- | ------- |
+| 1       | 1,00    |
+| 2       | 1,89    |
+| 4       | 3,40    |
+| 8       | 3,35    |
+| 16      | 3,48    |
+| 32      | 3,49    |
 
-Observa-se que o melhor desempenho foi obtido com 16 e 32 threads,
-apresentando speedup próximo de 3,5 vezes em relação à execução com apenas
-uma thread.
+### Análise
 
-Também foi observado que o ganho deixa de crescer significativamente após
-4 threads, indicando a presença de partes sequenciais do algoritmo que
-limitam a escalabilidade.
+Observa-se que o ganho de desempenho cresce rapidamente até 4 threads.
 
-======================================================================
-4. OPENMP PARA GPU
-==================
+A partir desse ponto, o speedup tende a estabilizar, indicando a presença de regiões sequenciais no algoritmo, conforme previsto pela Lei de Amdahl.
 
-4.1 Estratégia de Implementação
+O melhor resultado foi obtido com **16 e 32 threads**, alcançando um speedup próximo de **3,5×**.
 
-A paralelização do algoritmo K-Means na GPU foi desenvolvida utilizando o
-modelo de execução por diretivas OpenMP Target Offloading.
+---
 
-O objetivo principal foi mover o gargalo computacional do algoritmo para a
-GPU, gerenciando o ciclo de vida dos dados para minimizar o custo de
-transferência pelo barramento PCIe.
+# OpenMP para GPU
 
-A região paralelizada compreende os Steps 3 e 4, responsáveis pela
-reatribuição dos pontos aos clusters.
+## Estratégia de Implementação
 
-A função auxiliar calculateNearst foi marcada com:
+A versão GPU foi desenvolvida utilizando **OpenMP Target Offloading**, transferindo para a GPU o principal gargalo computacional do algoritmo.
 
+A função auxiliar responsável pelo cálculo da distância foi marcada com:
+
+```c
 #pragma omp declare target
+```
 
-permitindo a geração de uma versão da função para execução na GPU.
+permitindo sua execução diretamente na GPU.
 
-Para o laço de reatribuição foi utilizada a diretiva:
+A região paralelizada utiliza:
 
+```c
 #pragma omp target teams distribute parallel for reduction(+:changed) private(t)
+```
 
-onde:
+### Papel das diretivas
 
-* teams cria equipes de execução na GPU;
-* distribute distribui as iterações entre as equipes;
-* parallel for distribui o trabalho entre as threads;
-* private(t) garante uma cópia privada da variável temporária;
-* reduction(+:changed) realiza a soma segura das alterações de cluster.
+* `target`: envia a execução para a GPU;
+* `teams`: cria equipes de threads;
+* `distribute`: distribui o trabalho entre as equipes;
+* `parallel for`: distribui as iterações entre as threads;
+* `private(t)`: evita condições de corrida;
+* `reduction(+:changed)`: soma de forma segura as alterações realizadas.
 
-Para o gerenciamento dos dados foi utilizada a diretiva:
+---
 
-#pragma omp target data map(tofrom: observations[0:size]) 
+## Gerenciamento de Dados
+
+Os dados permanecem alocados na GPU através de:
+
+```c
+#pragma omp target data \
+map(tofrom: observations[0:size]) \
 map(alloc: clusters[0:k])
+```
 
-mantendo o dataset alocado na memória da GPU durante toda a execução.
+A atualização dos centróides é realizada por:
 
-A sincronização dos centróides foi realizada através de:
-
+```c
 #pragma omp target update to(clusters[0:k])
+```
 
-permitindo atualizar apenas o vetor de clusters a cada iteração.
-
----
-
-## 4.2 Resultados Obtidos
-
-## Configuração         Tempo (s)
-
-GPU OpenMP            9,492
+reduzindo o volume de dados transferidos pelo barramento PCIe.
 
 ---
 
-## 4.3 Speedup
+## Resultados Obtidos
 
-Considerando como referência a versão sequencial pura, executada com uma
-thread, a versão OpenMP para GPU alcançou speedup aproximado de 3,00 vezes.
+| Configuração | Tempo (s) |
+| ------------ | --------- |
+| GPU OpenMP   | **9,492** |
 
-Quando comparada ao melhor resultado obtido pela CPU multicore (32 threads),
-a GPU apresentou speedup relativo de aproximadamente 0,86 vezes.
+### Speedup
 
-Esse comportamento evidencia o impacto das regiões sequenciais do algoritmo
-e do custo de transferência de dados entre CPU e GPU.
+| Comparação                     | Speedup   |
+| ------------------------------ | --------- |
+| GPU OpenMP vs Sequencial       | **3,00×** |
+| GPU OpenMP vs CPU (32 threads) | **0,86×** |
 
-Apesar dessas limitações, a implementação demonstrou que o modelo de
-offloading é capaz de acelerar significativamente o processamento de grandes
-volumes de dados.
+### Análise
 
-======================================================================
-5. CUDA PARA GPU
-================
+Embora a GPU tenha apresentado ganho expressivo em relação à execução sequencial, o desempenho foi limitado por:
 
-5.1 Estratégia de Implementação
+* Transferências de dados entre CPU e GPU;
+* Necessidade de atualização dos centróides na CPU;
+* Presença de partes sequenciais no algoritmo.
 
-A paralelização utilizando CUDA foi desenvolvida explorando diretamente os
-recursos da GPU através de kernels.
+---
+
+# CUDA para GPU
+
+## Estratégia de Implementação
+
+A versão CUDA foi desenvolvida utilizando kernels executados diretamente pela GPU.
 
 O principal kernel implementado foi:
 
+```c
 assignClustersKernel
+```
 
-responsável pela etapa de associação de cada observação ao centróide mais
-próximo.
+responsável por encontrar o centróide mais próximo para cada observação.
 
-Cada thread da GPU processa uma observação do dataset.
+Cada thread processa exatamente uma observação.
 
-Foi utilizada uma configuração composta por:
+---
 
-* 256 threads por bloco;
-* grid calculado dinamicamente através da expressão:
+## Configuração da GPU
 
+Foram utilizados:
+
+```c
+256 threads por bloco
+```
+
+e:
+
+```c
 (size + threadsPerBlock - 1) / threadsPerBlock
+```
 
-Além disso, foi utilizada a condição:
+para o cálculo dinâmico do número de blocos.
 
+Para evitar acessos inválidos à memória:
+
+```c
 if (i >= size) return;
-
-para evitar acessos inválidos à memória.
+```
 
 ---
 
-## 5.2 Gerenciamento de Memória
+## Gerenciamento de Memória
 
-Foi utilizada Memória Unificada através da função:
+Foi utilizada **Memória Unificada**:
 
+```c
 cudaMallocManaged()
+```
 
-Essa estratégia reduz a necessidade de cópias explícitas entre CPU e GPU,
-simplificando o gerenciamento de memória.
+permitindo um espaço de memória compartilhado entre CPU e GPU.
 
 ---
 
-## 5.3 Controle de Concorrência
+## Controle de Concorrência
 
-Para evitar condições de corrida na variável "changed", foi utilizada a
-operação:
+Para evitar condições de corrida na variável `changed` foi utilizada a operação:
 
+```c
 atomicAdd()
+```
 
-Essa operação garante que múltiplas threads possam atualizar a variável de
-forma segura sem perda de dados.
-
----
-
-## 5.4 Resultados Obtidos
-
-## Configuração         Tempo (s)
-
-GPU CUDA             15,709
+garantindo atualizações seguras por múltiplas threads.
 
 ---
 
-## 5.5 Speedup
+## Resultados Obtidos
 
-Comparando a execução CUDA com a versão sequencial, foi obtido um speedup
-aproximado de 1,81 vezes.
+| Configuração | Tempo (s)  |
+| ------------ | ---------- |
+| GPU CUDA     | **15,709** |
 
-O desempenho foi limitado principalmente pela transferência de dados entre
-CPU e GPU e pela permanência da etapa de atualização dos centróides na CPU.
+### Speedup
 
-Mesmo assim, os resultados demonstram que a utilização da GPU proporciona
-ganhos significativos para a etapa mais custosa do algoritmo.
+| Comparação         | Speedup   |
+| ------------------ | --------- |
+| CUDA vs Sequencial | **1,81×** |
+
+### Análise
+
+O desempenho foi limitado principalmente por:
+
+* Latência de comunicação CPU ↔ GPU;
+* Atualização sequencial dos centróides;
+* Custos de sincronização entre host e device.
+
+Mesmo assim, a implementação CUDA demonstrou ganhos significativos em relação à execução sequencial.
+
+---
+
+# Conclusões
+
+Os resultados demonstraram que a paralelização do algoritmo K-Means pode reduzir significativamente o tempo de execução para grandes volumes de dados.
+
+Entre as abordagens avaliadas:
+
+| Implementação | Melhor Tempo |
+| ------------- | ------------ |
+| Sequencial    | 28,470 s     |
+| OpenMP CPU    | 8,21 s       |
+| OpenMP GPU    | 9,492 s      |
+| CUDA GPU      | 15,709 s     |
+
+A versão **OpenMP para CPU multicore** apresentou o melhor desempenho geral para o ambiente utilizado, atingindo speedup próximo de **3,5×** em relação à versão sequencial.
